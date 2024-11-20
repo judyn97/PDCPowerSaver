@@ -1,163 +1,85 @@
 import os
 import time
 import tkinter as tk
-import configparser
 from monitorcontrol import get_monitors
-import keyboard
 import ctypes
 
-
-class ConfigManager:
-    def __init__(self, configfile):
-        self.configfile = configfile
-        self.config = configparser.ConfigParser()
-        self.load_user_settings()
-
-    def load_user_settings(self):
-        try:
-            self.config.read(self.configfile)
-            if not self.config.has_section('Settings'):
-                self.config.add_section('Settings')
-                self.set_default_settings()
-                self.save_user_settings()
-            return {
-                "lock_pc": self.config.getboolean('Settings', 'lock_pc'),
-                "monitor_off_type": self.config.getint('Settings', 'monitor_off_type'),
-                "monitor_on_method": self.config.getboolean('Settings', 'monitor_on_method')
-            }
-        except Exception as e:
-            print(f"Error loading settings: {e}")
-            return self.set_default_settings()
-
-    def set_default_settings(self):
-        self.config.add_section('Settings')
-        self.config.set('Settings', 'lock_pc', '0')
-        self.config.set('Settings', 'monitor_off_type', '0')
-        self.config.set('Settings', 'monitor_on_method', '0')
-        return {
-            "lock_pc": 0,
-            "monitor_off_type": 0,
-            "monitor_on_method": 0
-        }
-
-    def save_user_settings(self):
-        try:
-            with open(self.configfile, 'w') as f:
-                self.config.write(f)
-        except Exception as e:
-            print(f"Error saving settings: {e}")
-
-
 class MonitorPowerSaver:
+    """Main class for handling the monitor power saving functionality and UI."""
+
     def __init__(self):
+        # Load configuration settings
         self.script_dir = os.path.dirname(os.path.abspath(__file__))
         self.configfile = os.path.join(self.script_dir, "settings_config.ini")
-        self.config_manager = ConfigManager(self.configfile)
-        self.user_settings = self.config_manager.load_user_settings()
+        
+        #Initialize the lock settings
+        self.user_lock_pc = True
 
+        # Initialize Tkinter window
         self.window = tk.Tk()
-        self.lock_pc_var = tk.IntVar(value=self.user_settings["lock_pc"])
-        self.monitor_on_method = tk.IntVar(value=self.user_settings["monitor_on_method"])
-        self.monitor_off_type = tk.IntVar(value=self.user_settings["monitor_off_type"])
-        self.onMonitorCheckButton = None
+        self.lock_pc_var = tk.IntVar(value=self.user_lock_pc)
+
+        self.countdown_seconds = 15  # Countdown timer set to 10 seconds
 
         self.setup_ui()
         self.window.protocol("WM_DELETE_WINDOW", self.on_close)
 
+        # Start the countdown timer
+        self.start_countdown()
+
     def setup_ui(self):
-        self.window.geometry("500x200")
-        self.window.title("PDC PC Power Saver")
+        """Sets up the main UI components."""
+        self.window.geometry("500x250")
+        self.window.title("PDC Monitor Power Saver")
         self.window.resizable(width=False, height=False)
 
-        buttonSettings = tk.Button(text="Settings", font="Arial, 10", command=self.open_settings_window)
-        buttonSettings.place(x=420, y=170)
+        # Greeting Label
+        self.greeting = tk.Label(self.window, text="Turning off PC monitors..", font="Arial, 13")
+        self.greeting.pack(pady=20)
 
-        greeting = tk.Label(self.window, text="Do you want to power off your PC monitor/s ?", font="Arial, 13")
-        greeting.pack(pady=50)
+        # Countdown Label
+        self.countdown_label = tk.Label(self.window, text=f"Auto shutdown in {self.countdown_seconds} seconds", font="Arial, 12", fg="red")
+        self.countdown_label.pack(pady=10)
 
-        footer = tk.Label(self.window, text="Copyright ©2024. Jalaludin Zakaria @ PDC", font="Arial, 9")
-        footer.pack(side=tk.BOTTOM, pady=1)
+        # Buttons for user response
+        button_frame = tk.Frame(self.window)
+        button_frame.pack(pady=10)
 
-        buttonFrame = tk.Frame(self.window)
-        buttonFrame.place(x=125, y=100)
+        button_yes = tk.Button(button_frame, text="Close now", font="Arial, 13", width=10, command=self.handle_yes_click)
+        button_yes.pack(side=tk.LEFT, padx=10)
 
-        buttonYes = tk.Button(buttonFrame, text="Yes", font="Arial, 13", width=10, command=self.handle_yes_click)
-        buttonYes.pack(side=tk.LEFT, padx=10)
-
-        buttonNo = tk.Button(buttonFrame, text="No", font="Arial, 13", width=10, command=self.handle_no_click)
-        buttonNo.pack(side=tk.LEFT, padx=10)
-
-    def open_settings_window(self):
-        newWindow = tk.Toplevel(self.window)
-        newWindow.title("Settings")
-        newWindow.geometry("500x200")
+        button_no = tk.Button(button_frame, text="Cancel", font="Arial, 13", width=10, command=self.handle_no_click)
+        button_no.pack(side=tk.LEFT, padx=10)
 
         # Lock PC checkbox
-        lockPCCheckButton = tk.Checkbutton(newWindow, text="Lock PC", font="Arial, 11", variable=self.lock_pc_var,
-                                           command=self.toggle_lock_pc)
-        lockPCCheckButton.place(x=300, y=30)
+        lock_pc_checkbutton = tk.Checkbutton(
+            self.window, text="Lock PC", font="Arial, 11",
+            variable=self.lock_pc_var, command=self.toggle_lock_pc
+        )
+        lock_pc_checkbutton.pack(pady=10)
 
-        # Monitor off type radio buttons
-        tk.Label(newWindow, text="Select monitor off type :", font="Arial, 11").place(x=100, y=60)
-        tk.Radiobutton(newWindow, text="Hardware off", font="Arial, 11", variable=self.monitor_off_type, value=1,
-                       command=self.save_radio_button_state).place(x=300, y=60)
-        tk.Radiobutton(newWindow, text="Software off", font="Arial, 11", variable=self.monitor_off_type, value=0,
-                       command=self.save_radio_button_state).place(x=300, y=90)
-
-        # Monitor ON method checkbox
-        tk.Label(newWindow, text="Enable Keyboard ON :", font="Arial, 11").place(x=100, y=120)
-        self.onMonitorCheckButton = tk.Checkbutton(newWindow, text="Keyboard", font="Arial, 11",
-                                                    variable=self.monitor_on_method,
-                                                    command=self.toggle_keyboard_on)
-        self.update_on_monitor_check_button()
-        self.onMonitorCheckButton.place(x=300, y=120)
-
-    def update_on_monitor_check_button(self):
-        if self.lock_pc_var.get() == 1 or self.monitor_off_type.get() == 1:
-            self.onMonitorCheckButton.config(state="disabled")
-            self.onMonitorCheckButton.deselect()
-        else:
-            self.onMonitorCheckButton.config(state="normal")
-
-    def save_radio_button_state(self):
-        self.config_manager.config.set('Settings', 'monitor_off_type', str(self.monitor_off_type.get()))
-        self.update_on_monitor_check_button()
-        self.save_settings()
+        # Footer Label
+        footer = tk.Label(self.window, text="Copyright ©2024. Jalaludin Zakaria @ PDC", font="Arial, 9")
+        footer.pack(side=tk.BOTTOM, pady=5)
 
     def toggle_lock_pc(self):
-        self.config_manager.config.set('Settings', 'lock_pc', str(self.lock_pc_var.get()))
-        self.update_on_monitor_check_button()
-        self.save_settings()
-
-    def toggle_keyboard_on(self):
-        self.config_manager.config.set('Settings', 'monitor_on_method', str(self.monitor_on_method.get()))
-        self.save_settings()
-
-    def save_settings(self):
-        self.config_manager.save_user_settings()
+        """Toggles the setting for locking the PC."""
+        self.lock_pc_var.get()
 
     def handle_yes_click(self):
-        if self.lock_pc_var.get():
-            self.lock_pc()
-            time.sleep(1)
-
-        if self.monitor_off_type.get() == 1:
-            self.set_monitor_power_mode("off_hard")
-        else:
-            self.set_monitor_power_mode("off_soft")
-
-        if self.monitor_on_method.get():
-            self.keyboard_on_interrupt()
-
-        self.window.destroy()
+        """Handles the 'Yes' button click event."""
+        self.power_off_monitor()
 
     def handle_no_click(self):
+        """Handles the 'No' button click event to close the window."""
         self.window.destroy()
 
     def lock_pc(self):
+        """Locks the PC immediately."""
         ctypes.windll.user32.LockWorkStation()
 
     def set_monitor_power_mode(self, mode):
+        """Sets the monitor power mode to 'off_hard'."""
         try:
             for monitor in get_monitors():
                 with monitor:
@@ -165,18 +87,32 @@ class MonitorPowerSaver:
         except Exception as e:
             print(f"Error controlling monitor power mode: {e}")
 
-    def keyboard_on_interrupt(self):
-        while True:
-            if keyboard.is_pressed('spacebar'):
-                self.set_monitor_power_mode("on")
-                print("Spacebar pressed! Powering ON monitors..")
-                break
+    def power_off_monitor(self):
+        """Locks the PC if selected and powers off the monitor."""
+        if self.lock_pc_var.get():
+            self.lock_pc()
+            time.sleep(1)  # Small delay before turning off the monitor
+        
+        # Power off the monitor
+        self.set_monitor_power_mode("off_hard")
+        self.window.destroy()
+
+    def start_countdown(self):
+        """Starts a countdown timer that turns off the monitor after 10 seconds."""
+        if self.countdown_seconds > 0:
+            self.countdown_label.config(text=f"Auto shutdown in {self.countdown_seconds} seconds")
+            self.countdown_seconds -= 1
+            self.window.after(1000, self.start_countdown)
+        else:
+            self.power_off_monitor()
 
     def on_close(self):
+        """Handles the window close event."""
         self.window.destroy()
 
 
 def main():
+    """Main entry point to run the MonitorPowerSaver application."""
     power_saver = MonitorPowerSaver()
     power_saver.window.mainloop()
 
